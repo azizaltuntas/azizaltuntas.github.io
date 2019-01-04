@@ -1,6 +1,7 @@
 ---
 layout: post
-title: Basla
+title: Why I Switched from Ghost to Jekyll
 ---
 
-Deneme
+**TL;DR** Use [Jekyll and Github Pages](https://help.github.com/articles/about-github-pages-and-jekyll/) for a cheap and maintainable blog.
+
