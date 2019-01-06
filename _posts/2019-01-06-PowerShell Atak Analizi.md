@@ -1,0 +1,102 @@
+# Powershell Malware Analiz
+
+# Giriş
+
+Günümüzde artık birçok saldırıda bilindiği üzere powershell kullanılmakta.**Powershell** ile bir çok atak vektörü üretilebiliyor ve birçok uygulama tarafındanda kullanılıp tetiklenebiliyor.Bu durum artık powershell'in Endpoint ürünleri tarafından zararlı/zararsız demeden engellediğini veya herhangi bir uygulama tarafından **Child Process** olarak powershell çalıştırılırsa direk olarak uygulama ve atağın engellendiğini görüyoruz.Endpoint ürünlerinde oluşan powershell uyarılarında genelde gördüğüm atakların çoğunluğu Encoding edilmiş payloadlar şeklinde gerçekleştirilmekte.Saldırı direk engellendiği için çoğu **Endpoint** üzerinden ne tür bir saldırı olduğu sistemde neler gerçekleştirdiği ve hangi ip ve port üzerinden çıkış yaptığı görülememekte.Bu yüzden statik ve dinamik analizler gerçekleştirerek daha detaylı teknik bilgiye ulaşabilir ve Firewall gibi cihazlardan ip/port engelleyerek sıkılaştırma daha fazla yapılabilir.
+
+
+# Analiz
+
+Genel olarak ataklar aşağıdaki grafikte gösterildiği üzere gerçekleştirilmekte.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/grap.PNG)
+
+Karşılaştığım örnek bir atakta encode edilmiş bir payloada rastladım.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/ilk.PNG)
+	
+Görüldüğü üzere **base64** ile encode edilmiş.Gözümüze çarpan başka bir detay ise **“Compression.GzipStream”** ifadesi.Burada anlatılmak istenen base64’ü decode ettiğimizde bize sıkıştırılmış bir dosyanın stringini verecek.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/1.png)
+
+
+Python’da ufak bir kod yazarak base64 datayı ilk önce decode ediyoruz ve ardından decod edilen datayı “.gzip” uzantılı bir dosyanın üzerine yazıyoruz.Bu “.bin” dosya formatıda olabilir.Mühim olan Hex Signature’ın doğru yazılması.Bu şekilde toolların dosyanın uncompress edilebilir sıkıştırılmış bir dosya olduğunu anlayabilir.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/gz1.PNG)
+
+İlk 4 byte baktığımızda *“1F 8B”* görülmekte.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/gz.PNG)
+
+
+Ufak bir araştırmadan sonra *“GZIP File”* olduğu anlaşılmakta.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/2.png)
+
+Oluşturduğumuz dosyayı açtığımızda içerisinden powershell ile geliştirilmiş bir kod çıkmakta.**”VirtualAlloc”,”CreateThread”** gibi fonksiyonlar kullanılması zaten başta bize niyetini belli etmekte.Kabaca içerisinde çıkan base64 datasının boyutu kadar bellekte yer açılmakta ve decode edilen data belleğe aktarılıp tetiklenmekte.
+
+>[https://msdn.microsoft.com/en-us/library/windows/desktop/aa366887(v=vs.85).aspx](https://msdn.microsoft.com/en-us/library/windows/desktop/aa366887(v=vs.85).aspx)
+
+MSDN incelendiğinde ;
+
+     - LPVOID WINAPI VirtualAlloc(
+       _In_opt_ LPVOID lpAddress,
+       _In_ SIZE_T dwSize,
+       _In_ DWORD flAllocationType,
+       _In_ DWORD flProtect
+       );
+Bu fonksiyonun aldığı bir kaç parametre görülmekte.
+
+ 1. İlk parametreye tahsis edilecek bölgenin başlangıç adresi adresi
+    verilmekte.
+ 2. Tahsis edilecek bölgenin boyutu belirlenmekte.
+ 3. Tahsis tibi belirlenir.
+ 4. Tahsis edilen bölgede ne tür haklara sahip olunacağı belirlenir.
+
+Son 3 parametre incelendiğinde ;
+
+ 1. *$qnue.Length* = Tahsis edilecek bölgenin boyutu base64 datasının
+    uzunluğu kadar.(**qnue** fonsiyonundan bakılabilir.)
+ 2. **0x3000** MSDN ye bakıldığında **MEM_COMMIT | MEM_REVERSE** ye tekabul etmekte.Yani tek seferde tahsis işlemi gerçekleştirir.
+![https://docs.microsoft.com/en-us/scripting/winscript/reference/ijsdebugdatatarget-allocatevirtualmemory-method](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/mem.PNG)
+
+>https://docs.microsoft.com/en-us/scripting/winscript/reference/ijsdebugdatatarget-allocatevirtualmemory-method
+
+ 3. 0x40 ise tahsis edilen bölgede yazma,okuma.çalıştırma izinlerini
+    verir.
+![https://docs.microsoft.com/en-us/windows/desktop/memory/memory-protection-constants](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/mem2.PNG)
+
+>https://docs.microsoft.com/en-us/windows/desktop/memory/memory-protection-constants
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/3.PNG)
+
+Buraya kadar olan çıkarımlarda son gördüğümüz base64 data büyük ihtimalle shellcode olacağı yönündeydi.İncelemek için ilk önce opcodu almak gerekiyordu.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/4.png)
+
+Sonrasında C# ile aynı powershell’de olduğu üzere derledim.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/5.png)
+
+Sandbox servislerinde iincelendiğinde çoğunluk **“Trojan.Metasploit”** şeklinde ifade etmekte.Anlaşılacağı üzere metasploit üzerinden bir payload oluşturulmuş.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/gdb.PNG)
+
+Başka bir bilgi ise gdb ile stringlere baktığımızda karşımıza çıkıyor.Clear olarak ip adresi ve “wininet” çıkmakta.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/wininet.PNG)
+
+*Ida* ile bakıldığı zaman **wininet** fonksiyonunu load etmek için bir shellcode olduğu kısa bir araştırmadan sonra anlaşılmakta.
+
+![https://gist.github.com/jdferrell3/4db966da06f4fa77816a54d802aca0f8](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/wininet2.PNG)
+
+>https://gist.github.com/jdferrell3/4db966da06f4fa77816a54d802aca0f8
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/7.PNG)
+
+Aynı zamanda bir analiz makinasında çıkan powershell kodunu Windows işletim sistemlerinde yer alan Powershell ISE aracı ile de çalıştırıp basit bir statik analiz yaparak gerçekleşen olayları inceleyebiliriz.
+
+![enter image description here](https://raw.githubusercontent.com/azizaltuntas/azizaltuntas.github.io/master/_posts/powershellimage/8.PNG)
+
+Görüldüğü üzere **10.60.136.26** ip adresine ve bu ip adresinin **8443** portuna bağlantı sağlamaya çalışmakta.Bağlantı tipi ise anlaşılacağı üzere local portun random verilmesinden ve state’in **Listening** OLMAMAsından dolayı  ayrıca *“wininet”* fonksiyonununda kullanıldığı göz önüne alındığında  “Reverse_http/https” olduğu anlaşılmaktadır.Ip adresinin yapısına bakıldığında bunun Private – Internal bir ip adresi olduğu görülmekte.Ya kurum içerisinde bir kişi hacklenerek hacklenen makina üzerinden işlemler yapılmakta yada kurum içerisinden birisi bu atakları yapmakta.Bu aşamadan sonra toplanan bilgiler ile  *SIEM* vb ürünler ile izleri takip edip diğer aktiviteler izlenebilir ve direk kurum içerisinden **forensic** yaparak asıl olaya ulaşılabilir.
+
