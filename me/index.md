@@ -2,4 +2,4 @@
 layout: about
 ---
 
-Bu benim hakkımda
+Birşeyler karalıyorum.
